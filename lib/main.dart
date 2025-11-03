@@ -62,7 +62,6 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   final _db = FirebaseFirestore.instance;
 
-  // Helper de formato local para esta pantalla
   String _fmt(double? v) => v == null ? '--' : v.toStringAsFixed(0);
 
   @override
@@ -71,7 +70,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Truco Rank — Demo'),
+        title: const Text('Truco Rank — Demo (sin cuotas)'),
         actions: [
           IconButton(
             icon: const Icon(Icons.refresh),
@@ -84,9 +83,7 @@ class _HomeScreenState extends State<HomeScreen> {
               if (!context.mounted) return;
               ScaffoldMessenger.of(context).showSnackBar(
                 SnackBar(
-                  content: Text(
-                    'Nuevo UID: ${FirebaseAuth.instance.currentUser?.uid}',
-                  ),
+                  content: Text('Nuevo UID: ${FirebaseAuth.instance.currentUser?.uid}'),
                 ),
               );
               setState(() {});
@@ -94,6 +91,14 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ],
       ),
+
+      // Crear mesa rápida (DEV)
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: _crearMesaDemo,
+        icon: const Icon(Icons.add),
+        label: const Text('Nueva mesa'),
+      ),
+
       body: Column(
         children: [
           if (uid != null) _BalancePanel(uid: uid),
@@ -134,31 +139,33 @@ class _HomeScreenState extends State<HomeScreen> {
                       final after = (m['after'] as num?)?.toDouble() ?? 0;
                       final ts = (m['ts'] as Timestamp?)?.toDate();
 
+                      IconData icon;
+                      switch (type) {
+                        case 'DEPOSIT':
+                          icon = Icons.south_west; break;
+                        case 'WITHDRAW':
+                          icon = Icons.north_east; break;
+                        case 'WIN':
+                          icon = Icons.emoji_events; break;
+                        case 'LOSS':
+                          icon = Icons.cancel_outlined; break;
+                        default:
+                          icon = Icons.lock_clock; // LOCK_JOIN
+                      }
+
+                      final title = switch (type) {
+                        'DEPOSIT' => 'Depósito',
+                        'WITHDRAW' => 'Retiro',
+                        'LOCK_JOIN' => 'Apuesta bloqueada',
+                        'WIN' => 'Ganaste',
+                        'LOSS' => 'Perdiste',
+                        _ => type
+                      };
+
                       return ListTile(
                         dense: true,
-                        leading: Icon(
-                          type == 'DEPOSIT'
-                              ? Icons.south_west
-                              : type == 'WITHDRAW'
-                                  ? Icons.north_east
-                                  : type == 'WIN'
-                                      ? Icons.emoji_events
-                                      : type == 'LOSS'
-                                          ? Icons.cancel_outlined
-                                          : Icons.lock_clock, // LOCK_JOIN
-                        ),
-                        title: Text(
-                          (type == 'DEPOSIT'
-                                  ? 'Depósito'
-                                  : type == 'WITHDRAW'
-                                      ? 'Retiro'
-                                      : type == 'LOCK_JOIN'
-                                          ? 'Apuesta bloqueada'
-                                          : type == 'WIN'
-                                              ? 'Ganaste'
-                                              : 'Perdiste') +
-                              ': ${_fmt(amount)}',
-                        ),
+                        leading: Icon(icon),
+                        title: Text('$title: ${_fmt(amount)}'),
                         subtitle: Text(
                           'Antes: ${_fmt(before)}  →  Después: ${_fmt(after)}'
                           '${ts != null ? ' · ${ts.toLocal()}' : ''}',
@@ -172,12 +179,12 @@ class _HomeScreenState extends State<HomeScreen> {
 
           const Divider(height: 1),
 
-          // === Lista de Mesas ===
+          // === Lista de Mesas (sin cuotas) ===
           Expanded(
             child: StreamBuilder<QuerySnapshot>(
               stream: _db
                   .collection('Mesas')
-                  .orderBy(FieldPath.documentId) // <- sin paréntesis
+                  .orderBy(FieldPath.documentId) // sin paréntesis en este SDK
                   .snapshots(),
               builder: (context, snap) {
                 if (snap.connectionState == ConnectionState.waiting) {
@@ -200,8 +207,6 @@ class _HomeScreenState extends State<HomeScreen> {
 
                     final id = '${data['id'] ?? mesaDocId}';
                     final monto = (data['monto'] as num?)?.toDouble() ?? 0.0;
-                    final cuota1 = (data['cuota1'] as num?)?.toDouble() ?? 1.0;
-                    final cuota2 = (data['cuota2'] as num?)?.toDouble() ?? 1.0;
                     final estado = (data['estado'] ?? 'abierta').toString();
 
                     final jug = Map<String, dynamic>.from(data['jugadores'] ?? {});
@@ -228,14 +233,6 @@ class _HomeScreenState extends State<HomeScreen> {
                         spacing: 8,
                         crossAxisAlignment: WrapCrossAlignment.center,
                         children: [
-                          FilledButton.tonal(
-                            onPressed: () => _mostrarDialogoApuesta(ganadorLabel: 'Gana 1', cuota: cuota1),
-                            child: Text('Gana 1 (${cuota1.toStringAsFixed(2)})'),
-                          ),
-                          FilledButton.tonal(
-                            onPressed: () => _mostrarDialogoApuesta(ganadorLabel: 'Gana 2', cuota: cuota2),
-                            child: Text('Gana 2 (${cuota2.toStringAsFixed(2)})'),
-                          ),
                           // Botón Unirse
                           ElevatedButton(
                             onPressed: puedeUnirse
@@ -282,6 +279,22 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ],
       ),
+    );
+  }
+
+  // ---- Crear mesa demo (sin cuotas) ----
+  Future<void> _crearMesaDemo() async {
+    final id = 'mesa${DateTime.now().millisecondsSinceEpoch % 100000}';
+    await _db.collection('Mesas').doc(id).set({
+      'id': id,
+      'monto': 1000,
+      'estado': 'abierta',
+      'jugadores': <String, dynamic>{},
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Mesa creada: #$id')),
     );
   }
 
@@ -424,21 +437,17 @@ class _HomeScreenState extends State<HomeScreen> {
         final lAvail = (loseData['available'] as num?)?.toDouble() ?? 0.0;
         final lLocked = (loseData['locked'] as num?)?.toDouble() ?? 0.0;
 
-        // Validaciones mínimas
         if (wLocked < monto || lLocked < monto) {
           throw Exception('LOCK_INSUFICIENTE');
         }
 
-        // Transferencia de pozo:
-        // - Ambos reducen locked en "monto".
-        // - GANADOR recibe (wLocked + lLocked) sobre available.
-        // - PERDEDOR no recupera su locked (es el pozo que cede).
+        // Transferencia de pozo (2 * monto):
         winBeforeAvail = wAvail;
         loseBeforeAvail = lAvail;
 
         final newWAvail = wAvail + wLocked + lLocked;
         final newWLocked = wLocked - monto;
-        final newLAvail = lAvail;          // no cambia
+        final newLAvail = lAvail;
         final newLLocked = lLocked - monto;
 
         winAfterAvail = newWAvail;
@@ -484,32 +493,6 @@ class _HomeScreenState extends State<HomeScreen> {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(pretty)));
     }
-  }
-
-  // ---- diálogo de apuesta (placeholder) ----
-  void _mostrarDialogoApuesta({
-    required String ganadorLabel,
-    required double cuota,
-  }) {
-    showDialog(
-      context: context,
-      builder: (_) {
-        return AlertDialog(
-          title: Text('Apostar a $ganadorLabel'),
-          content: Text('Cuota: ${cuota.toStringAsFixed(2)}'),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Cancelar'),
-            ),
-            ElevatedButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Confirmar'),
-            ),
-          ],
-        );
-      },
-    );
   }
 }
 
@@ -573,7 +556,6 @@ class _BalancePanel extends StatelessWidget {
     );
   }
 
-  /// Pide un monto positivo al usuario. Devuelve `null` si cancela.
   static Future<double?> _promptAmount(BuildContext context, {required String title}) async {
     final controller = TextEditingController();
     return showDialog<double?>(
@@ -605,7 +587,6 @@ class _BalancePanel extends StatelessWidget {
     );
   }
 
-  /// Log de movimiento en balances/{uid}/movements
   static Future<void> _logMovement({
     required String uid,
     required String type, // 'DEPOSIT' | 'WITHDRAW' | 'LOCK_JOIN' | 'WIN' | 'LOSS'
@@ -627,7 +608,6 @@ class _BalancePanel extends StatelessWidget {
     });
   }
 
-  /// Suma `amount` a available + registra movimiento
   static Future<void> _deposit(BuildContext context, {required String uid, required double amount}) async {
     final ref = FirebaseFirestore.instance.collection('balances').doc(uid);
 
@@ -643,15 +623,13 @@ class _BalancePanel extends StatelessWidget {
     await _logMovement(uid: uid, type: 'DEPOSIT', amount: amount, before: before, after: after);
 
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Depósito realizado: ${_fmt(amount)}')),
+      SnackBar(content: Text('Depósito realizado: ${amount.toStringAsFixed(0)}')),
     );
   }
 
-  /// Resta `amount` de available + registra movimiento (o error si no alcanza)
   static Future<void> _withdraw(BuildContext context, {required String uid, required double amount}) async {
     final ref = FirebaseFirestore.instance.collection('balances').doc(uid);
 
-    // Pre-chequeo rápido
     final pre = await ref.get();
     final preAvailable = ((pre.data() ?? {})['available'] as num?)?.toDouble() ?? 0;
     if (amount > preAvailable) {
@@ -677,7 +655,7 @@ class _BalancePanel extends StatelessWidget {
       await _logMovement(uid: uid, type: 'WITHDRAW', amount: amount, before: before, after: after);
 
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Retiro realizado: ${_fmt(amount)}')),
+        SnackBar(content: Text('Retiro realizado: ${amount.toStringAsFixed(0)}')),
       );
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Saldo insuficiente')));
